@@ -58,21 +58,34 @@ def cindex():
     return ci
 
 
+_RESOURCE_DIR = None
+
+
+def _resource_dir():
+    """Clang's resource directory (libclang needs it passed explicitly)."""
+    global _RESOURCE_DIR
+    if _RESOURCE_DIR is None:
+        import subprocess
+        try:
+            _RESOURCE_DIR = subprocess.run(['clang', '-print-resource-dir'], capture_output=True,
+                                           text=True).stdout.strip()
+        except OSError:
+            _RESOURCE_DIR = ''
+    return _RESOURCE_DIR
+
+
 def parse_args_for(unit: dict, upstream: Path) -> List[str]:
-    from tools.compile_probe.__main__ import BASE_FLAGS, SHIM, translate_flags
+    """The compile probe's flags for one unit, for libclang."""
+    from tools.compile_probe.__main__ import BASE_FLAGS, DEFAULT_STD, SHIM, translate_flags
     src = upstream / unit['source']
     is_c = src.suffix == '.c'
     args = list(BASE_FLAGS) + ['-x', 'c' if is_c else 'c++']
+    if not is_c:
+        args.append('-std=' + DEFAULT_STD)
     args += ['-include', str(SHIM / 'fnv_prelude.h'), '-isystem', str(SHIM), '-I', str(upstream / 'include')]
     args += translate_flags(unit['flags'], is_c)
-    # libclang needs Clang's resource headers explicitly.
-    import subprocess
-    try:
-        res = subprocess.run(['clang', '-print-resource-dir'], capture_output=True, text=True).stdout.strip()
-        if res:
-            args += ['-resource-dir', res]
-    except OSError:
-        pass
+    if _resource_dir():
+        args += ['-resource-dir', _resource_dir()]
     return args
 
 
@@ -154,8 +167,10 @@ def _bases(c) -> List[Tuple[object, bool]]:
         if ch.kind == ci.CursorKind.CXX_BASE_SPECIFIER:
             decl = ch.type.get_declaration()
             d = decl.get_definition() if decl is not None else None
+            if d is not None and not any(True for _ in d.get_children()):
+                d = None   # an implicit template instantiation: libclang shows no members
             if d is None:
-                # Template base: look through the template reference.
+                # Template base: use the template's pattern.
                 for gc in ch.get_children():
                     if gc.kind in (ci.CursorKind.TEMPLATE_REF, ci.CursorKind.TYPE_REF):
                         r = gc.referenced
@@ -184,12 +199,20 @@ def vftables(c, depth=0) -> List[Tuple[Tuple[str, ...], List[Slot]]]:
     methods = [ch for ch in c.get_children()
                if ch.kind in (ci.CursorKind.CXX_METHOD, ci.CursorKind.DESTRUCTOR,
                               ci.CursorKind.FUNCTION_TEMPLATE)]
+    def group_key(ch):
+        return '~' if ch.kind == ci.CursorKind.DESTRUCTOR else ch.spelling
+
     first_decl_order: Dict[str, int] = {}
     for i, ch in enumerate(c.get_children()):
-        nm = ch.spelling
+        nm = group_key(ch)
         if nm and nm not in first_decl_order:
             first_decl_order[nm] = i
     owner = strip_template_args(qualified_name(c))
+    # Every class has a destructor (implicit if not declared); it overrides a virtual one in a base.
+    for _, slots in tables:
+        for s in slots:
+            if s.is_dtor:
+                s.owner, s.name = owner, '~' + c.spelling
     new_virtuals = []
     for m in methods:
         key = _method_key(m)
@@ -207,8 +230,8 @@ def vftables(c, depth=0) -> List[Tuple[Tuple[str, ...], List[Slot]]]:
     if new_virtuals:
         groups: Dict[str, list] = defaultdict(list)
         for m in new_virtuals:
-            groups['~' if m.kind == ci.CursorKind.DESTRUCTOR else m.spelling].append(m)
-        order = sorted(groups, key=lambda n: first_decl_order.get(n if n != '~' else '~' + c.spelling, 1 << 30))
+            groups[group_key(m)].append(m)
+        order = sorted(groups, key=lambda n: first_decl_order.get(n, 1 << 30))
         new_slots = []
         for n in order:
             for m in reversed(groups[n]):

@@ -28,8 +28,9 @@ Read `PLAN.md` for the roadmap and `STATUS.md` for the latest numbers before sta
 
 - Byte-matching decompilation of the Steam PC exe v1.4.0.525: 2,989 translation units under
   `src/` (plus `third_party/zlib-1.2.1`), ~3.9M lines, 70,611 in-scope functions match. Includes
-  statically linked Gamebryo, Havok, SpeedTree, FaceGen, and the MSVC CRT pieces it reimplements.
-  Building it yields object files to compare, not a game.
+  statically linked Gamebryo, Havok, SpeedTree, FaceGen, zlib and some MSVC CRT functions.
+  Building it yields object files to compare, not a game. Upstream compiles each unit with
+  MSVC 2008 (SP1/RTM) or 2005 and the Windows SDK 6.0A headers, plus `/I include`.
 - `build/units.json`: `units[]` with `source`, `compiler` (`sp1`/`rtm`/`vc8`), `flags` (MSVC),
   `functions[]` (`address`, decorated `symbol`, `size`, optional `fold_aliases`), `symbols`
   (decorated name -> original address), `eh_tails`, `literal_symbols`. Function definitions in
@@ -44,7 +45,9 @@ Read `PLAN.md` for the roadmap and `STATUS.md` for the latest numbers before sta
   member but defined as a `__fastcall` free function; both take arg 1 in ECX under MSVC).
   Clang on i686 Linux passes `this` on the stack and uses the Itanium vtable layout, so these
   break silently.
-- Upstream compiles with the real MSVC 2008/2005 headers and Windows SDK 6.0A plus `/I include`.
+- Upstream relies on MSVC-only behaviour the port must reproduce or transform: forward-declared
+  enums as complete types, `__if_exists`, no two-phase lookup, `#define _INCLUDED_MM2` to keep
+  MSVC's `xmmintrin.h` out, its own `__m128` unions, `__declspec(align)` under `#pragma pack`.
 - Upstream's fingerprint check hashes a few `.text` functions. The Steam exe as installed has
   encrypted code, so it fails the check by design; only a plain (DRM-free) exe can pass.
 
@@ -70,17 +73,41 @@ Read `PLAN.md` for the roadmap and `STATUS.md` for the latest numbers before sta
   stub, Win32 shim over POSIX; case-insensitive file access accepting backslash paths.
 - Player's test machine: CachyOS (Arch), x86-64, NVIDIA; 32-bit deps from `lib32-*` packages.
 
-## Repo layout
+## Repo layout and tools
 
 - `upstream.pin`, `scripts/fetch-upstream.sh`: pinned upstream fetch into `upstream/fnv_decomp`.
-- `tools/common/`: units.json loader, MSVC name decoding, source tag index.
-- `tools/analyze/`: Phase 1 linkage/ABI analysis (`python3 -m tools.analyze --help`).
-- `tools/compile_probe/`: Phase 2 i686 compile baseline.
-- `shim/include/`: minimal Windows/MSVC header shim for Clang on Linux.
-- `tests/`: pytest; synthetic fixtures only.
-- Outputs go to `out/` (gitignored).
+- `tools/common/`: `msvc_demangle.py` (structured MSVC demangler; renders exactly like
+  llvm-undname), `units.py` (units.json model), `source_index.py` (@fnv tags, line lookup),
+  `undname.py` (llvm-undname batch wrapper).
+- `tools/analyze/` (Phase 1, `python3 -m tools.analyze --jobs 4 [steps]`): `addresses.py`
+  (address kinds, alias map, ld fragments), `abi.py` (argument-location model, MSVC vs i686
+  Linux), `conventions.py`, `data.py`, `vtables.py` + `vtable_ast.py` (libclang views, MSVC
+  vftable layout). Output: `out/analyze/`.
+- `tools/compile_probe/` (Phase 2, `python3 -m tools.compile_probe [--mode obj] [--recategorize]`):
+  flags in `BASE_FLAGS`/`DEFAULT_STD`, `categories.py` (root causes), `export.py` (writes
+  `status/`). Output: `out/compile_probe/`.
+- `shim/include/`: Windows/MSVC header shim for Clang on Linux, grown only from errors:
+  `fnv_prelude.h` (forced include: MSVC macros, SAL, CRT extensions, yvals macros),
+  `windows.h`, `d3d9.h` (subset; DXVK Native replaces it in Phase 5), MSVC-shaped
+  `mmintrin.h`/`xmmintrin.h`/`emmintrin.h`/`intrin.h` (union `__m128`, intrinsics as
+  functions, MSVC include guards), `mm_malloc.h`, `crtdefs.h`, `commctrl.h`.
+- `status/`: committed per-unit compile results (paths, counts, categories only).
+- `tests/`: pytest; synthetic fixtures only. `pytest -q` from the repo root.
+
+## Compile flags (Phase 2)
+
+`--target=i686-linux-gnu -fms-extensions -fms-compatibility -fasm-blocks -malign-double
+-fms-compatibility-version=19.00 -mlong-double-64 -fdelayed-template-parsing -mmmx
+-std=gnu++14 -include shim/include/fnv_prelude.h -isystem shim/include -I upstream/include`.
+Why each extra flag is there: `STATUS.md`. Keep x87 float code (no `-msse`) until the
+x87/SSE decision in `PLAN.md` is made.
 
 ## Environment notes
 
-- Cloud container: Ubuntu 24.04, clang 18, `gcc-multilib g++-multilib` provide i686 headers,
-  `python3-clang-18` provides libclang bindings, `llvm-undname` is on PATH.
+- Cloud container: Ubuntu 24.04, clang 18. `apt-get install gcc-multilib g++-multilib
+  python3-clang-18` gives i686 headers and the libclang bindings (in
+  `/usr/lib/python3/dist-packages`; `tools/analyze/vtable_ast.py` finds them). `llvm-undname`
+  is on PATH. `/usr/bin/time` is absent.
+- Never pipe a long-running tool into `head`: SIGPIPE kills it mid-run. Redirect to a log.
+- Full runs: analyze ~1 min (`--no-locations` faster), compile probe ~45 s (syntax) / ~1 min
+  (obj) with 4 jobs.

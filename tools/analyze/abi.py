@@ -31,7 +31,8 @@ Clang i686 Linux (Itanium/SysV), as the port compiles today:
   * explicit __stdcall / __fastcall are honoured as on MSVC
   * aggregates are returned through a hidden pointer that is the first stack argument and
     that the callee pops
-  * long double is 12 bytes instead of 8; member function pointers are 8 bytes instead of 4
+  * member function pointers are 8 bytes instead of 4 (long double is 8 bytes on both: the
+    port compiles with -mlong-double-64, as MSVC's long double is 64-bit)
 """
 from __future__ import annotations
 
@@ -87,7 +88,7 @@ def _size(cls, model):
     if k in ('i8', 'f8'):
         return 8
     if k == 'f80':
-        return 8 if model == 'msvc' else 12
+        return 8   # MSVC; and the port uses -mlong-double-64
     if k == 'memfnptr':
         return 4 if model == 'msvc' else 8
     return None  # aggregate of unknown size
