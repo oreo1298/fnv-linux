@@ -32,6 +32,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SHIM = ROOT / 'shim' / 'include'
 TARGET = 'i686-linux-gnu'
+DEFAULT_STD = 'gnu++14'
 BASE_FLAGS = ['--target=' + TARGET, '-fms-extensions', '-fms-compatibility', '-fasm-blocks', '-malign-double',
               # Clang's MS-compat behaviour level, not _MSC_VER (the prelude sets that to 1500).
               # Below 19 Clang turns off char16_t/char32_t, which libstdc++ needs.
@@ -41,7 +42,10 @@ BASE_FLAGS = ['--target=' + TARGET, '-fms-extensions', '-fms-compatibility', '-f
               '-mlong-double-64',
               # MSVC 2008 has no two-phase lookup: template bodies are only checked when
               # instantiated. Clang enables this emulation by default for MSVC targets only.
-              '-fdelayed-template-parsing']
+              '-fdelayed-template-parsing',
+              # The game requires MMX/SSE; MMX enables _mm_prefetch's builtin without changing
+              # floating-point code generation (SSE would move float math off x87).
+              '-mmmx']
 
 DIAG_RE = re.compile(r'^(?P<file>[^:\n]+):(?P<line>\d+):(?P<col>\d+): (?P<sev>fatal error|error|warning): '
                      r'(?P<msg>.*?)(?: \[(?P<flag>-W[^\]]+)\])?$')
@@ -76,15 +80,19 @@ def translate_flags(msvc_flags, is_c):
     return out
 
 
-def command(unit, upstream: Path, mode: str, obj_dir: Path, error_limit: int):
+def command(unit, upstream: Path, mode: str, obj_dir: Path, error_limit: int, std=None):
     src = upstream / unit['source']
     is_c = src.suffix == '.c'
     cmd = ['clang' if is_c else 'clang++'] + BASE_FLAGS
+    if std and not is_c:
+        cmd.append('-std=' + std)
     cmd += ['-include', str(SHIM / 'fnv_prelude.h'), '-isystem', str(SHIM),
             '-I', str(upstream / 'include')]
     cmd += translate_flags(unit['flags'], is_c)
     cmd += ['-ferror-limit=%d' % error_limit, '-fno-color-diagnostics', '-fno-caret-diagnostics',
-            '-Wno-everything' if mode == 'syntax' else '-w']
+            # -w keeps Clang's default-error diagnostics (e.g. ISO C++17 'register'), unlike
+            # -Wno-everything, so both modes count the same errors.
+            '-w']
     if mode == 'syntax':
         cmd.append('-fsyntax-only')
     else:
@@ -92,6 +100,19 @@ def command(unit, upstream: Path, mode: str, obj_dir: Path, error_limit: int):
         cmd += ['-c', '-o', str(obj)]
     cmd.append(str(src))
     return cmd
+
+
+NOTE_RE = re.compile(r'^(?P<file>[^:\n]+):(?P<line>\d+):(?P<col>\d+): note: (?P<msg>.*)$')
+
+
+def _rel(f, upstream):
+    try:
+        return str(Path(f).resolve().relative_to(upstream.resolve()))
+    except ValueError:
+        try:
+            return 'shim:' + str(Path(f).resolve().relative_to(SHIM))
+        except ValueError:
+            return 'system:' + Path(f).name
 
 
 _QUOTED = re.compile(r"'[^']*'")
@@ -103,8 +124,8 @@ def template(msg: str) -> str:
     return _NUM.sub('N', _QUOTED.sub("'X'", msg))
 
 
-def run_unit(unit, upstream, mode, obj_dir, error_limit, timeout):
-    cmd = command(unit, upstream, mode, obj_dir, error_limit)
+def run_unit(unit, upstream, mode, obj_dir, error_limit, timeout, std=None):
+    cmd = command(unit, upstream, mode, obj_dir, error_limit, std)
     t0 = time.time()
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, errors='replace', timeout=timeout,
@@ -118,16 +139,13 @@ def run_unit(unit, upstream, mode, obj_dir, error_limit, timeout):
     for line in err.splitlines():
         m = DIAG_RE.match(line)
         if m and m.group('sev') != 'warning':
-            f = m.group('file')
-            try:
-                f = str(Path(f).resolve().relative_to(upstream.resolve()))
-            except ValueError:
-                try:
-                    f = 'shim:' + str(Path(f).resolve().relative_to(SHIM))
-                except ValueError:
-                    f = 'system:' + Path(f).name
-            diags.append({'file': f, 'line': int(m.group('line')), 'sev': m.group('sev'),
-                          'msg': m.group('msg')})
+            diags.append({'file': _rel(m.group('file'), upstream), 'line': int(m.group('line')),
+                          'sev': m.group('sev'), 'msg': m.group('msg')})
+        elif diags and ': note: ' in line and len(diags[-1].setdefault('notes', [])) < 2:
+            nm = NOTE_RE.match(line)
+            if nm:
+                diags[-1]['notes'].append({'file': _rel(nm.group('file'), upstream), 'line': int(nm.group('line')),
+                                           'msg': nm.group('msg')})
     if status is None:
         if rc == 0:
             status = 'ok'
@@ -156,7 +174,17 @@ def main(argv=None):
     ap.add_argument('--error-limit', type=int, default=50)
     ap.add_argument('--timeout', type=int, default=600)
     ap.add_argument('--print-command', action='store_true')
+    ap.add_argument('--std', default=DEFAULT_STD,
+                    help='C++ dialect (default %(default)s: the closest to MSVC 2008 that libstdc++ accepts; '
+                         'Clang\'s own default, gnu++17, rejects register and dynamic exception '
+                         'specifications and crashes Clang on 5 units)')
+    ap.add_argument('--tag', default='', help='suffix for the output directory')
+    ap.add_argument('--recategorize', action='store_true',
+                    help='recompute categories and summaries from an existing results.json')
     args = ap.parse_args(argv)
+    if args.recategorize:
+        return recategorize(Path(args.upstream).resolve(),
+                            Path(args.out) / (args.mode + ('-' + args.tag if args.tag else '')))
 
     upstream = Path(args.upstream).resolve()
     units = json.loads((upstream / 'build' / 'units.json').read_text())['units']
@@ -169,20 +197,20 @@ def main(argv=None):
         units = units[::step][:args.sample]
     if args.limit:
         units = units[:args.limit]
-    out = Path(args.out) / args.mode
+    out = Path(args.out) / (args.mode + ('-' + args.tag if args.tag else ''))
     out.mkdir(parents=True, exist_ok=True)
     obj_dir = Path(args.out) / 'obj'
     if args.mode == 'obj':
         obj_dir.mkdir(parents=True, exist_ok=True)
     if args.print_command:
         for u in units:
-            print(' '.join(command(u, upstream, args.mode, obj_dir, args.error_limit)))
+            print(' '.join(command(u, upstream, args.mode, obj_dir, args.error_limit, args.std)))
         return
 
     results = []
     t0 = time.time()
     with ThreadPoolExecutor(max_workers=args.jobs) as ex:
-        futs = [ex.submit(run_unit, u, upstream, args.mode, obj_dir, args.error_limit, args.timeout)
+        futs = [ex.submit(run_unit, u, upstream, args.mode, obj_dir, args.error_limit, args.timeout, args.std)
                 for u in units]
         for n, f in enumerate(as_completed(futs), 1):
             results.append(f.result())
@@ -191,7 +219,27 @@ def main(argv=None):
                 print('[compile_probe] %d/%d done, %d ok, %.0fs' % (n, len(futs), ok, time.time() - t0),
                       file=sys.stderr, flush=True)
     results.sort(key=lambda r: r['index'])
+    from tools.compile_probe.categories import categorize_results
     summary = summarize(results, args.mode, time.time() - t0)
+    summary['categories'] = categorize_results(results, upstream)
+    summary['std'] = args.std
+    summary['flags'] = BASE_FLAGS
+    (out / 'results.json').write_text(json.dumps({'summary': summary, 'units': results}, indent=1))
+    write_histogram(results, out / 'histogram.csv')
+    (out / 'summary.md').write_text(markdown(summary))
+    print(markdown(summary))
+
+
+def recategorize(upstream: Path, out: Path):
+    from tools.compile_probe.categories import categorize_results
+    doc = json.loads((out / 'results.json').read_text())
+    results = doc['units']
+    old = doc['summary']
+    summary = summarize(results, old['mode'], old['seconds'])
+    for k in ('std', 'flags'):
+        if k in old:
+            summary[k] = old[k]
+    summary['categories'] = categorize_results(results, upstream)
     (out / 'results.json').write_text(json.dumps({'summary': summary, 'units': results}, indent=1))
     write_histogram(results, out / 'histogram.csv')
     (out / 'summary.md').write_text(markdown(summary))
@@ -244,7 +292,15 @@ def write_histogram(results, path):
 
 def markdown(s):
     lines = ['### %s mode: %d units, %.1f%% pass (%ds)' % (s['mode'], s['units'], s['pass_rate'], s['seconds']),
-             '', 'Status: ' + ', '.join('%s %d' % kv for kv in sorted(s['status'].items())), '',
+             '', 'Status: ' + ', '.join('%s %d' % kv for kv in sorted(s['status'].items())), '']
+    if s.get('categories'):
+        lines += ['Root-cause categories (units with at least one such error; first = units whose first '
+                  'error is in the category):', '',
+                  '| # | category | units | first |', '|---|---|---|---|']
+        for i, c in enumerate(s['categories'], 1):
+            lines.append('| %d | %s | %d | %d |' % (i, c['category'], c['units'], c['first']))
+        lines.append('')
+    lines += ['Clang message templates:', '',
              '| # | units | occurrences | first error in | error (identifiers as \'X\', numbers as N) |',
              '|---|---|---|---|---|']
     for i, e in enumerate(s['top_errors'][:25], 1):
