@@ -1,0 +1,9 @@
+[project]
+name = "fnv-linux-tools"
+version = "0.0.0"
+description = "Tools, source transforms and platform code for a native Linux port built from fnv_decomp."
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

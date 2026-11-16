@@ -1,0 +1,36 @@
+# Upstream decompilation checkout (fetched by scripts/fetch-upstream.sh). Never commit it.
+/upstream/
+
+# Transformed working trees, build outputs, analysis outputs.
+/work/
+/build/
+/out/
+*.o
+*.obj
+*.a
+*.so
+*.elf
+*.d
+
+# Anything extracted from or derived from the player's executable. Never commit it.
+/extracted/
+*.exe
+*.dll
+*.EXE
+*.DLL
+*.bin
+*.bsa
+*.esm
+*.esp
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+*.egg-info/
+
+# Editors
+.vscode/
+.idea/
+*.swp
