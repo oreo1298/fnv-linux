@@ -114,7 +114,8 @@ Flags: `--target=i686-linux-gnu -fms-extensions -fms-compatibility -fasm-blocks
 drops char16_t, which libstdc++ needs; `_MSC_VER` stays 1500 via the prelude),
 `-mlong-double-64` (MSVC's long double is 64-bit; with `-malign-double` an 80-bit one is
 12 bytes aligned to 8, which libstdc++ rejects), `-fdelayed-template-parsing` (MSVC 2008 has
-no two-phase lookup), `-mmmx` (for `_mm_prefetch`; does not change float code), and
+no two-phase lookup), `-msse2 -mfpmath=sse` (decided: SSE2 floating point; also provides the
+builtins `_mm_prefetch`/`_mm_setcsr` need), and
 `-std=gnu++14` (gnu++17 rejects `register`/dynamic exception specs and crashed Clang on 5
 units; gnu++98 passes fewer: 56.9%). 32-bit headers: Ubuntu `gcc-multilib g++-multilib`.
 Header shim: `shim/include` (see `CLAUDE.md`).
@@ -122,7 +123,7 @@ Header shim: `shim/include` (see `CLAUDE.md`).
 | mode | pass | |
 |---|---|---|
 | `-fsyntax-only` | **1,792 / 2,989 (60.0%)** | 1,197 with errors, no crashes |
-| `-c` | **1,791 / 2,989 (59.9%)** | 1 more: `_mm_setcsr` needs SSE codegen |
+| `-c` | **1,792 / 2,989 (60.0%)** | the same units as `-fsyntax-only` |
 
 Per unit: `status/compile_probe_units.tsv`. Per area: `status/compile_probe_areas.md`
 (Havok 85%, Gamebryo 84%, zlib 100%; game code: fallout_shared 31%, fallout 29%,

@@ -14,6 +14,10 @@
 #ifndef _INCLUDED_MM2 /* MSVC's own guard: upstream defines it to keep this header out */
 #define _INCLUDED_MM2
 
+#ifndef __SSE2__
+#error "fnv-linux compiles with SSE2 floating point (-msse2 -mfpmath=sse); see PLAN.md"
+#endif
+
 #include <mmintrin.h>
 
 typedef float __fnv_v4sf __attribute__((__vector_size__(16)));
@@ -80,17 +84,10 @@ __FNV_INTRIN __m128 _mm_mul_ss(__m128 a, __m128 b) { a.m128_f32[0] *= b.m128_f32
 __FNV_INTRIN __m128 _mm_div_ss(__m128 a, __m128 b) { a.m128_f32[0] /= b.m128_f32[0]; return a; }
 __FNV_INTRIN __m128 _mm_sqrt_ps(__m128 a) { __FNV_PS(__builtin_sqrtf(a.m128_f32[0]), __builtin_sqrtf(a.m128_f32[1]), __builtin_sqrtf(a.m128_f32[2]), __builtin_sqrtf(a.m128_f32[3])); }
 __FNV_INTRIN __m128 _mm_sqrt_ss(__m128 a) { a.m128_f32[0] = __builtin_sqrtf(a.m128_f32[0]); return a; }
-/* Hardware approximations (12-bit), as the original game computes them. These need the SSE
- * instructions; they carry target("sse") and are not force-inlined, so the rest of a unit can
- * stay on the default i686 (x87) code generation. */
-#ifdef __cplusplus
-#define __FNV_INTRIN_SSE extern "C" inline __attribute__((__target__("sse"), __nodebug__))
-#else
-#define __FNV_INTRIN_SSE static __inline__ __attribute__((__target__("sse"), __nodebug__))
-#endif
-__FNV_INTRIN_SSE __m128 _mm_rsqrt_ps(__m128 a) { __m128 r; r.__fnv_v = __builtin_ia32_rsqrtps(a.__fnv_v); return r; }
-__FNV_INTRIN_SSE __m128 _mm_rsqrt_ss(__m128 a) { __m128 r; r.__fnv_v = __builtin_ia32_rsqrtss(a.__fnv_v); return r; }
-__FNV_INTRIN_SSE __m128 _mm_rcp_ps(__m128 a) { __m128 r; r.__fnv_v = __builtin_ia32_rcpps(a.__fnv_v); return r; }
+/* Hardware approximations (12-bit), as the original game computes them. */
+__FNV_INTRIN __m128 _mm_rsqrt_ps(__m128 a) { __m128 r; r.__fnv_v = __builtin_ia32_rsqrtps(a.__fnv_v); return r; }
+__FNV_INTRIN __m128 _mm_rsqrt_ss(__m128 a) { __m128 r; r.__fnv_v = __builtin_ia32_rsqrtss(a.__fnv_v); return r; }
+__FNV_INTRIN __m128 _mm_rcp_ps(__m128 a) { __m128 r; r.__fnv_v = __builtin_ia32_rcpps(a.__fnv_v); return r; }
 /* MINPS/MAXPS: the second operand is returned when either is NaN or both are zero. */
 __FNV_INTRIN __m128 _mm_min_ps(__m128 a, __m128 b) { __FNV_PS(a.m128_f32[0] < b.m128_f32[0] ? a.m128_f32[0] : b.m128_f32[0], a.m128_f32[1] < b.m128_f32[1] ? a.m128_f32[1] : b.m128_f32[1], a.m128_f32[2] < b.m128_f32[2] ? a.m128_f32[2] : b.m128_f32[2], a.m128_f32[3] < b.m128_f32[3] ? a.m128_f32[3] : b.m128_f32[3]); }
 __FNV_INTRIN __m128 _mm_max_ps(__m128 a, __m128 b) { __FNV_PS(a.m128_f32[0] > b.m128_f32[0] ? a.m128_f32[0] : b.m128_f32[0], a.m128_f32[1] > b.m128_f32[1] ? a.m128_f32[1] : b.m128_f32[1], a.m128_f32[2] > b.m128_f32[2] ? a.m128_f32[2] : b.m128_f32[2], a.m128_f32[3] > b.m128_f32[3] ? a.m128_f32[3] : b.m128_f32[3]); }

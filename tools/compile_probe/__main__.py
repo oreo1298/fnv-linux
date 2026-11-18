@@ -43,9 +43,10 @@ BASE_FLAGS = ['--target=' + TARGET, '-fms-extensions', '-fms-compatibility', '-f
               # MSVC 2008 has no two-phase lookup: template bodies are only checked when
               # instantiated. Clang enables this emulation by default for MSVC targets only.
               '-fdelayed-template-parsing',
-              # The game requires MMX/SSE; MMX enables _mm_prefetch's builtin without changing
-              # floating-point code generation (SSE would move float math off x87).
-              '-mmmx']
+              # Floating point uses SSE2 (decided over x87): scalar float/double math in SSE
+              # registers, and the SSE builtins the intrinsics need (_mm_prefetch, _mm_setcsr).
+              # The game already requires an SSE2-class CPU.
+              '-msse2', '-mfpmath=sse']
 
 DIAG_RE = re.compile(r'^(?P<file>[^:\n]+):(?P<line>\d+):(?P<col>\d+): (?P<sev>fatal error|error|warning): '
                      r'(?P<msg>.*?)(?: \[(?P<flag>-W[^\]]+)\])?$')

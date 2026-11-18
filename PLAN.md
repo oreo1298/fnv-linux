@@ -23,7 +23,7 @@ layouts from libclang), data report. Counts and reconciliation with the brief: `
 ## Phase 2: i686 compile baseline, `tools/compile_probe` (status: done)
 
 `python3 -m tools.compile_probe [--mode obj]`, header shim in `shim/include`.
-Baseline 60.0% of units pass `-fsyntax-only`, 59.9% compile with `-c`. Root-cause categories
+Baseline 60.0% of units pass `-fsyntax-only` and compile with `-c` (SSE2 floating point). Root-cause categories
 and a greedy unlock order: `STATUS.md`.
 
 ## Phase 3: Transforms (status: not started) - proposal
@@ -79,9 +79,12 @@ synthetic-input tests and is measured by re-running the Phase 1/2 tools on `work
 - Canonical vftable per vtable address: the slot list from the richest consistent view, each
   slot tied to the function address defined for it. The Phase 1 AST pass already gives views
   for 2,448 of 2,491 addresses; 559 addresses have disagreeing views (99 among cleanly
-  compiling units). On the player's machine the original vftable contents (slot -> function
-  address) can be read from `.rdata` as part of the local build and make this exact; here,
-  synthetic fixtures.
+  compiling units). Decided: on the player's machine the build reads the original vftable
+  contents (slot -> function address) from the exe's `.rdata`, after the fingerprint check,
+  and the transform uses them as ground truth: slot count, destructor slot, and which function
+  address fills each slot. The data stays in `extracted/` (gitignored) and is never committed
+  or printed. In cloud sessions this is developed and tested with synthetic PE fixtures; the
+  views from the AST pass are the fallback when no exe is given.
 - Rewrite every unit's view of a dynamic class to declare that canonical virtual-method list
   (and identical data layout, checked by the layout diff); per-unit non-virtual members can
   stay.
@@ -102,6 +105,10 @@ synthetic-input tests and is measured by re-running the Phase 1/2 tools on `work
   address has one class definition used by all units.
 
 ## Phase 4: Data extractor, linker layout, code-pointer translation (status: not started)
+
+Build order on the player's machine: fetch -> fingerprint check and extraction -> transforms
+(3d consumes the original vftables) -> compile -> link. The extractor therefore runs before the
+transforms; it exposes the vftable contents to them through `extracted/`.
 
 - Extractor: reads only unencrypted `.data/.rdata/.bss` from the player's exe, after
   upstream's fingerprint check (`build/image_check.json`); fails cleanly otherwise.
@@ -133,11 +140,13 @@ out-of-scope functions above; MSVC CRT extensions declared in `shim/include/fnv_
 out-of-line definitions of the shim's SSE intrinsics (units that redeclare them call them as
 external functions); a TEB for `__readfsdword` (38 occurrences); SEH.
 
-Open decision: x87 vs SSE floating point. The original was built for x87 (MSVC 2008, no
-`/arch`). Clang keeps x87 only while SSE is disabled (it refuses `-mfpmath=387` with SSE), so
-`_mm_setcsr`/`_mm_getcsr` (one unit) need either `-msse` (all float math moves to SSE) or a
-per-function `target("sse")` rewrite. Affects numeric fidelity (and D3D's FPU precision
-setting), not correctness.
+Decided: SSE2 floating point (`-msse2 -mfpmath=sse`). The original computes with x87 (MSVC
+2008, no `/arch`); the port computes scalar float/double math in SSE registers, so results can
+differ in the last bits from the original (no 80-bit intermediates, no dependence on the x87
+precision-control word that D3D9 sets). Code that reads or sets the x87 control word
+(`_controlfp`, `fldcw` in inline asm) needs review in Phase 5/6; MXCSR (`_mm_setcsr`) is now
+the live control register. Float/double return values still come back in ST0 (i386 SysV ABI),
+as on MSVC.
 
 ## Phase 6: First link and boot (status: not started)
 

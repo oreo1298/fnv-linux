@@ -9,6 +9,17 @@ from tools.compile_probe.__main__ import BASE_FLAGS, SHIM, template, translate_f
 needs_clang = pytest.mark.skipif(shutil.which('clang++') is None, reason='needs clang')
 
 
+def test_float_math_is_sse(tmp_path):
+    """Scalar float math uses SSE registers, not x87 (decision recorded in PLAN.md)."""
+    if shutil.which('clang') is None:
+        pytest.skip('needs clang')
+    src = tmp_path / 'f.c'
+    src.write_text('float f(float a, float b) { return a * b + 1.0f; }\n')
+    asm = subprocess.run(['clang'] + BASE_FLAGS + ['-O2', '-S', '-o', '-', str(src)],
+                         capture_output=True, text=True, check=True).stdout
+    assert 'mulss' in asm and 'fmul' not in asm
+
+
 def test_translate_flags():
     assert translate_flags(['/MT', '/O2', '/EHsc', '/Gy'], False) == \
         ['-D_MT', '-O2', '-fexceptions', '-fcxx-exceptions', '-D_CPPUNWIND']
@@ -59,14 +70,16 @@ CHECK(sizeof(D3DMATRIX) == 64 && sizeof(D3DSURFACE_DESC) == 32);
 CHECK(sizeof(__m128) == 16 && __alignof(__m128) == 16 && offsetof(__m128, m128_f32) == 0);
 CHECK(sizeof(__m64) == 8 && sizeof(__m128i) == 16);
 CHECK(sizeof(long double) == 8);   /* -mlong-double-64: MSVC's long double */
+#ifndef __SSE2__
+#error SSE2 floating point expected
+#endif
 int main() { return 0; }
 '''
     _compile(tmp_path, src)
 
 
 @needs_clang
-@pytest.mark.parametrize('sse', [False, True])
-def test_sse_shim_semantics(tmp_path, sse):
+def test_sse_shim_semantics(tmp_path):
     src = r'''#include <intrin.h>
 #include <stdio.h>
 int main() {
@@ -80,6 +93,6 @@ int main() {
   return 0;
 }
 '''
-    rc, out = _compile(tmp_path, src, run=True, extra=['-msse2'] if sse else [])
+    rc, out = _compile(tmp_path, src, run=True)
     assert rc == 0
     assert out.strip() == '4 3 2 2|1|3|1'

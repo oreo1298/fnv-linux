@@ -1,6 +1,6 @@
 | area | units | -fsyntax-only ok | -c ok |
 |---|---|---|---|
-| src/havok | 902 | 769 (85%) | 768 (85%) |
+| src/havok | 902 | 769 (85%) | 769 (85%) |
 | src/fallout_shared | 543 | 170 (31%) | 170 (31%) |
 | src/gamebryo2.2 | 520 | 437 (84%) | 437 (84%) |
 | src/fallout | 354 | 101 (29%) | 101 (29%) |

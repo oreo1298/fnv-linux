@@ -54,8 +54,9 @@ Read `PLAN.md` for the roadmap and `STATUS.md` for the latest numbers before sta
 ## Architecture (decided)
 
 - Distribution: nothing from upstream or the game is shipped. On the player's machine:
-  fetch fnv_decomp at the pinned commit -> apply automated transforms -> extract data from the
-  player's exe -> compile -> link.
+  fetch fnv_decomp at the pinned commit -> check and extract data from the player's exe ->
+  apply automated transforms (the vtable unification uses the extracted vftables) -> compile ->
+  link.
 - Target: 32-bit x86 Linux (i686), Clang with
   `--target=i686-linux-gnu -fms-extensions -fms-compatibility -fasm-blocks -malign-double`
   (upstream's size `static_assert`s catch layout differences). 64-bit is out of scope.
@@ -68,6 +69,11 @@ Read `PLAN.md` for the roadmap and `STATUS.md` for the latest numbers before sta
   from units.json; data->data pointers stay valid.
 - Vtables: use compiler-generated Itanium vtables, so constructors storing an original vtable
   address are rewritten. Needs one agreed class definition per vtable: the central hard problem.
+  The local build may read the original vftable contents (slot -> function address) from the
+  player's exe `.rdata` (after the fingerprint check) as ground truth for the unification;
+  extraction therefore runs before the transforms. Never commit or print that data.
+- Floating point: SSE2 (`-msse2 -mfpmath=sse`), not x87. Results may differ from the original
+  in the last bits; accepted.
 - Platform: DXVK Native (32-bit) for d3d9, SDL3 for window/input/gamepad/audio output,
   DirectSound shim, FFmpeg libavcodec for Bink, a D3DX9 subset implemented here, Steamworks
   stub, Win32 shim over POSIX; case-insensitive file access accepting backslash paths.
@@ -97,10 +103,10 @@ Read `PLAN.md` for the roadmap and `STATUS.md` for the latest numbers before sta
 ## Compile flags (Phase 2)
 
 `--target=i686-linux-gnu -fms-extensions -fms-compatibility -fasm-blocks -malign-double
--fms-compatibility-version=19.00 -mlong-double-64 -fdelayed-template-parsing -mmmx
--std=gnu++14 -include shim/include/fnv_prelude.h -isystem shim/include -I upstream/include`.
-Why each extra flag is there: `STATUS.md`. Keep x87 float code (no `-msse`) until the
-x87/SSE decision in `PLAN.md` is made.
+-fms-compatibility-version=19.00 -mlong-double-64 -fdelayed-template-parsing -msse2
+-mfpmath=sse -std=gnu++14 -include shim/include/fnv_prelude.h -isystem shim/include
+-I upstream/include`. Why each extra flag is there: `STATUS.md`. The shim's `xmmintrin.h`
+requires SSE2.
 
 ## Environment notes
 

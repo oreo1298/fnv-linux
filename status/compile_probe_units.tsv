@@ -1,5 +1,5 @@
 # Phase 2 compile probe, per unit. index = position in build/units.json.
-# std=gnu++14 flags=--target=i686-linux-gnu -fms-extensions -fms-compatibility -fasm-blocks -malign-double -fms-compatibility-version=19.00 -mlong-double-64 -fdelayed-template-parsing -mmmx
+# std=gnu++14 flags=--target=i686-linux-gnu -fms-extensions -fms-compatibility -fasm-blocks -malign-double -fms-compatibility-version=19.00 -mlong-double-64 -fdelayed-template-parsing -msse2 -mfpmath=sse
 index	source	syntax	object	errors	first_error_category	all_categories
 0	src/NiRenderedTexture.cpp	ok	ok	0		
 1	src/bgscamerapathmanager.cpp	errors	errors	2	forward-declared enum used as a complete type	forward-declared enum used as a complete type
@@ -1837,7 +1837,7 @@ index	source	syntax	object	errors	first_error_category	all_categories
 1833	src/havok/common/base/system/stopwatch/hksystemclock_o2_nood_variant.cpp	ok	ok	0		
 1834	src/havok/common/base/system/stopwatch/hksystemclock_o2_variant.cpp	ok	ok	0		
 1835	src/havok/common/base/thread/criticalsection/win32/hkwin32criticalsection.cpp	ok	ok	0		
-1836	src/havok/common/base/thread/job/threadpool/cpu/hkcpujobthreadpool.cpp	ok	errors	0		
+1836	src/havok/common/base/thread/job/threadpool/cpu/hkcpujobthreadpool.cpp	ok	ok	0		
 1837	src/havok/common/base/thread/job/threadpool/cpu/hkcpujobthreadpool_gs_nogs_variant.cpp	errors	errors	1	SEH (__try/__except/__finally) unsupported on Linux	SEH (__try/__except/__finally) unsupported on Linux
 1838	src/havok/common/base/thread/jobqueue/hkjobqueue.cpp	ok	ok	0		
 1839	src/havok/common/base/thread/jobqueue/hkjobqueue_ehsc_noehsc_variant.cpp	ok	ok	0		
